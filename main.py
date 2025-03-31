@@ -9,6 +9,7 @@ import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
+from functools import wraps
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -85,6 +86,7 @@ def generate_signature(payload, secret_key):
 
 # IP 白名單檢查裝飾器
 def check_ip_whitelist(f):
+    @wraps(f)
     def wrapper(*args, **kwargs):
         client_ip = request.remote_addr
         logger.info(f"收到來自 IP {client_ip} 的請求")
