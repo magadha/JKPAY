@@ -69,7 +69,7 @@ def generate_signature(payload, secret_key):
 @app.route("/")
 def home():
     logger.info("摩揭陀貓舍街口支付伺服器已啟動！（測試環境）")
-    return "摩揭陀貓舍街口支付伺服器已啟動！（測試環境）"
+    return "摩揭陀貓子街口支付伺服器已啟動！（測試環境）"
 
 @app.route("/generate_payment", methods=["POST"])
 def generate_payment():
@@ -100,30 +100,12 @@ def generate_payment():
             logger.error("totalAmount 超過允許的最大值")
             return jsonify({"error": "totalAmount 超過允許的最大值"}), 400
 
-        # 計算每件商品的價格，確保總和等於 total_amount
-        base_price = total_amount // quantity
-        remainder = total_amount % quantity
-        products = []
-        for i in range(quantity):
-            price = base_price + (1 if i == quantity - 1 else 0) * remainder
-            products.append({
-                "name": "摩揭陀貓舍 商品",
-                "unit_count": 1,
-                "unit_price": price,
-                "unit_final_price": price,
-                "img": "https://magadha.weebly.com/uploads/4/8/1/5/48154117/1107-0_1_orig.jpg"  # 使用真實的圖片 URL
-            })
-
         if payment_method != "jkopay":
             logger.error(f"不支持的付款方式: {payment_method}")
             return jsonify({"error": f"不支持的付款方式: {payment_method}"}), 400
 
         # 街口支付邏輯
         platform_order_id = f"ORDER_{uuid.uuid4()}_{int(time.time())}"
-        # 設置訂單有效期限（當前時間 + 5 分鐘，台灣時間為 UTC+8）
-        utc_time = datetime.utcnow()  # 獲取 UTC 時間
-        taipei_time = utc_time + timedelta(hours=8)  # 加上 8 小時偏移
-        valid_time = (taipei_time + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
         data = {
             "store_id": JKO_PAY_STORE_ID,
             "platform_order_id": platform_order_id,
@@ -131,13 +113,8 @@ def generate_payment():
             "total_price": total_amount,
             "final_price": total_amount,
             "unredeem": total_amount,
-            "valid_time": valid_time,
-            "confirm_url": f"{BASE_URL}/confirm_url",
             "result_url": f"{BASE_URL}/result_url",
-            "result_display_url": f"{BASE_URL}/result_display_url",
-            "payment_type": "onetime",
-            "escrow": False,
-            "products": products
+            "result_display_url": f"{BASE_URL}/result_display_url"
         }
 
         # 計算簽名
