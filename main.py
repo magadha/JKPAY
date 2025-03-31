@@ -9,7 +9,6 @@ import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
-import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -112,7 +111,7 @@ def generate_payment():
                 "unit_count": 1,
                 "unit_price": price,
                 "unit_final_price": price,
-                "img": "https://example.com/product-image.jpg"  # 可選字段
+                "img": "https://magadha.weebly.com/uploads/4/8/1/5/48154117/1107-0_1_orig.jpg"  # 使用真實的圖片 URL
             })
 
         if payment_method != "jkopay":
@@ -121,9 +120,10 @@ def generate_payment():
 
         # 街口支付邏輯
         platform_order_id = f"ORDER_{uuid.uuid4()}_{int(time.time())}"
-        # 設置訂單有效期限（當前時間 + 20 分鐘，UTC+8 時區）
-        taipei_tz = pytz.timezone("Asia/Taipei")
-        valid_time = (datetime.now(taipei_tz) + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
+        # 設置訂單有效期限（當前時間 + 5 分鐘，台灣時間為 UTC+8）
+        utc_time = datetime.utcnow()  # 獲取 UTC 時間
+        taipei_time = utc_time + timedelta(hours=8)  # 加上 8 小時偏移
+        valid_time = (taipei_time + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
         data = {
             "store_id": JKO_PAY_STORE_ID,
             "platform_order_id": platform_order_id,
