@@ -9,17 +9,16 @@ import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# 設置日誌，同時輸出到文件和終端
-log_file = "app.log"
+# 設置日誌，僅輸出到終端（Render.com 會自動收集日誌）
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
+        logging.StreamHandler()  # 僅輸出到終端
     ]
 )
 logger = logging.getLogger(__name__)
@@ -27,42 +26,49 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://magadha.weebly.com"}})  # 允許來自 magadha.weebly.com 的跨域請求
 
-# 使用環境變數儲存敏感資訊
+# 使用環境變數儲存敏感資訊，移除默認值以強制從環境變數讀取
 JKO_PAY_STORE_ID = os.getenv("JKO_PAY_STORE_ID")
 JKO_PAY_API_KEY = os.getenv("JKO_PAY_API_KEY")
 JKO_PAY_SECRET_KEY = os.getenv("JKO_PAY_SECRET_KEY")
 JKO_PAY_ENTRY_URL = os.getenv("JKO_PAY_ENTRY_URL", "https://uat-onlinepay.jkopay.app/platform/entry")
 JKO_PAY_INQUIRY_URL = os.getenv("JKO_PAY_INQUIRY_URL", "https://uat-onlinepay.jkopay.app/platform/inquiry")
 JKO_PAY_REFUND_URL = os.getenv("JKO_PAY_REFUND_URL", "https://uat-onlinepay.jkopay.app/platform/refund")
-BASE_URL = os.getenv("BASE_URL", "https://magadha-jkopay.duckdns.org:8001")  # 更新為正確的域名
+BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")  # 更新為 Render.com 域名
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwju-slnDJ9RYSgWctfjQ7Yg0FOU4Ur6YFu5UWLlKVPsDuMQ3niQI--2b1T06fWBe7PDQ/exec")
 
-# 訂單儲存文件路徑
-ORDERS_FILE = "orders.json"
+# 檢查必要的環境變數是否存在
+required_env_vars = ["JKO_PAY_STORE_ID", "JKO_PAY_API_KEY", "JKO_PAY_SECRET_KEY"]
+for var in required_env_vars:
+    if not os.getenv(var):
+        logger.error(f"缺少必要的環境變數: {var}")
+        raise ValueError(f"缺少必要的環境變數: {var}")
 
-# 確保 orders.json 文件存在
-if not os.path.exists(ORDERS_FILE):
-    with open(ORDERS_FILE, "w") as f:
-        json.dump([], f)
+# 使用內存儲存訂單（Render.com 文件系統是臨時的）
+orders = []
 
 def load_orders():
-    with open(ORDERS_FILE, "r") as f:
-        return json.load(f)
+    return orders
 
-def save_orders(orders):
-    with open(ORDERS_FILE, "w") as f:
-        json.dump(orders, f, indent=4)
+def save_orders(new_orders):
+    global orders
+    orders = new_orders
 
 # 簽名計算函數（符合街口支付規則）
 def generate_signature(payload, secret_key):
-    # 將 payload 轉為字串（如果是字典則轉為 JSON 字串）
-    if isinstance(payload, dict):
-        payload_str = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
-    else:
-        payload_str = payload
+    # 確保 payload 是字典
+    if not isinstance(payload, dict):
+        raise ValueError("Payload must be a dictionary")
+    
+    # 按字母順序排序字段
+    sorted_payload = dict(sorted(payload.items()))
+    
+    # 轉為 JSON 字串，移除多餘空格
+    payload_str = json.dumps(sorted_payload, separators=(',', ':'), ensure_ascii=False)
+    
     # 將 payload 和 secret_key 轉為 UTF-8 編碼的字節
     input_bytes = payload_str.encode("utf-8")
     secret_key_bytes = secret_key.encode("utf-8")
+    
     # 使用 HMAC-SHA256 計算簽名
     digest = hmac.new(secret_key_bytes, input_bytes, hashlib.sha256).hexdigest()
     return digest
@@ -121,6 +127,7 @@ def generate_payment():
 
         # 街口支付邏輯
         platform_order_id = f"ORDER_{uuid.uuid4()}_{int(time.time())}"
+        current_timestamp = str(int(time.time()))  # 添加時間戳
         data = {
             "store_id": JKO_PAY_STORE_ID,
             "platform_order_id": platform_order_id,
@@ -132,18 +139,21 @@ def generate_payment():
             "result_display_url": f"{BASE_URL}/result_display_url",
             "payment_type": "onetime",
             "escrow": False,
+            "timestamp": current_timestamp,  # 添加時間戳字段
             "products": products
         }
 
         # 計算簽名
         signature = generate_signature(data, JKO_PAY_SECRET_KEY)
         logger.info(f"生成的簽名: {signature}")
+        logger.info(f"發送的請求數據: {json.dumps(data, ensure_ascii=False)}")
 
         headers = {
             "Content-Type": "application/json; charset=utf-8",
             "API-KEY": JKO_PAY_API_KEY,
             "DIGEST": signature
         }
+        logger.info(f"請求頭: {headers}")
 
         response = requests.post(JKO_PAY_ENTRY_URL, headers=headers, json=data)
         logger.info(f"發送街口支付請求 - 狀態碼: {response.status_code}, 回應: {response.text}")
@@ -159,7 +169,7 @@ def generate_payment():
                 payment_url = result["result_object"]["payment_url"]
                 logger.info(f"街口支付連結生成成功，平台訂單ID: {platform_order_id}, 支付URL: {payment_url}")
 
-                # 保存訂單到文件
+                # 保存訂單到內存
                 order_to_save = {
                     **order_data,
                     "platform_order_id": platform_order_id,
@@ -198,7 +208,7 @@ def result_url():
             logger.error("無效的回調，缺少平台訂單ID")
             return jsonify({"status": "error", "message": "缺少平台訂單ID"}), 400
 
-        # 從文件中查找訂單
+        # 從內存中查找訂單
         orders = load_orders()
         order_data = None
         for order in orders:
