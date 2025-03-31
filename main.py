@@ -8,6 +8,7 @@ import os
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,14 +27,14 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://magadha.weebly.com"}})  # 允許來自 magadha.weebly.com 的跨域請求
 
-# 使用環境變數儲存敏感資訊，移除默認值以強制從環境變數讀取
+# 使用環境變數儲存敏感資訊
 JKO_PAY_STORE_ID = os.getenv("JKO_PAY_STORE_ID")
 JKO_PAY_API_KEY = os.getenv("JKO_PAY_API_KEY")
 JKO_PAY_SECRET_KEY = os.getenv("JKO_PAY_SECRET_KEY")
 JKO_PAY_ENTRY_URL = os.getenv("JKO_PAY_ENTRY_URL", "https://uat-onlinepay.jkopay.app/platform/entry")
 JKO_PAY_INQUIRY_URL = os.getenv("JKO_PAY_INQUIRY_URL", "https://uat-onlinepay.jkopay.app/platform/inquiry")
 JKO_PAY_REFUND_URL = os.getenv("JKO_PAY_REFUND_URL", "https://uat-onlinepay.jkopay.app/platform/refund")
-BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")  # 更新為 Render.com 域名
+BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")  # 更新為 Render.com 提供的域名
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwju-slnDJ9RYSgWctfjQ7Yg0FOU4Ur6YFu5UWLlKVPsDuMQ3niQI--2b1T06fWBe7PDQ/exec")
 
 # 檢查必要的環境變數是否存在
@@ -55,21 +56,14 @@ def save_orders(new_orders):
 
 # 簽名計算函數（符合街口支付規則）
 def generate_signature(payload, secret_key):
-    # 確保 payload 是字典
-    if not isinstance(payload, dict):
-        raise ValueError("Payload must be a dictionary")
-    
-    # 按字母順序排序字段
-    sorted_payload = dict(sorted(payload.items()))
-    
-    # 轉為 JSON 字串，移除多餘空格
-    payload_str = json.dumps(sorted_payload, separators=(',', ':'), ensure_ascii=False)
-    
-    # 將 payload 和 secret_key 轉為 UTF-8 編碼的字節
+    if isinstance(payload, dict):
+        # 按字母順序排序字段
+        sorted_payload = dict(sorted(payload.items()))
+        payload_str = json.dumps(sorted_payload, separators=(',', ':'), ensure_ascii=False)
+    else:
+        payload_str = payload
     input_bytes = payload_str.encode("utf-8")
     secret_key_bytes = secret_key.encode("utf-8")
-    
-    # 使用 HMAC-SHA256 計算簽名
     digest = hmac.new(secret_key_bytes, input_bytes, hashlib.sha256).hexdigest()
     return digest
 
@@ -127,19 +121,21 @@ def generate_payment():
 
         # 街口支付邏輯
         platform_order_id = f"ORDER_{uuid.uuid4()}_{int(time.time())}"
-        current_timestamp = str(int(time.time()))  # 添加時間戳
+        # 設置訂單有效期限（當前時間 + 20 分鐘，UTC+8 時區）
+        valid_time = (datetime.now() + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
         data = {
             "store_id": JKO_PAY_STORE_ID,
             "platform_order_id": platform_order_id,
             "currency": "TWD",
             "total_price": total_amount,
             "final_price": total_amount,
-            "unredeem": total_amount,  # 假設不可折抵金額等於總金額
+            "unredeem": total_amount,
+            "valid_time": valid_time,  # 添加訂單有效期限
+            "confirm_url": f"{BASE_URL}/confirm_url",  # 添加確認 URL
             "result_url": f"{BASE_URL}/result_url",
             "result_display_url": f"{BASE_URL}/result_display_url",
             "payment_type": "onetime",
             "escrow": False,
-            "timestamp": current_timestamp,  # 添加時間戳字段
             "products": products
         }
 
@@ -147,13 +143,13 @@ def generate_payment():
         signature = generate_signature(data, JKO_PAY_SECRET_KEY)
         logger.info(f"生成的簽名: {signature}")
         logger.info(f"發送的請求數據: {json.dumps(data, ensure_ascii=False)}")
+        logger.info(f"請求頭: {{'Content-Type': 'application/json; charset=utf-8', 'API-KEY': '{JKO_PAY_API_KEY}', 'DIGEST': '{signature}'}}")
 
         headers = {
             "Content-Type": "application/json; charset=utf-8",
             "API-KEY": JKO_PAY_API_KEY,
             "DIGEST": signature
         }
-        logger.info(f"請求頭: {headers}")
 
         response = requests.post(JKO_PAY_ENTRY_URL, headers=headers, json=data)
         logger.info(f"發送街口支付請求 - 狀態碼: {response.status_code}, 回應: {response.text}")
@@ -191,6 +187,40 @@ def generate_payment():
         logger.error(f"錯誤: {str(e)}")
         logger.error(f"堆棧跟踪: {traceback.format_exc()}")
         return jsonify({"error": f"伺服器錯誤: {str(e)}"}), 500
+
+@app.route("/confirm_url", methods=["POST"])
+def confirm_url():
+    try:
+        logger.info("進入 /confirm_url 路由")
+        callback_data = request.json
+        logger.info(f"收到街口支付確認回調: {callback_data}")
+
+        platform_order_id = callback_data.get("platform_order_id")
+        if not platform_order_id:
+            logger.error("無效的確認回調，缺少平台訂單ID")
+            return jsonify({"valid": False}), 400
+
+        # 從內存中查找訂單
+        orders = load_orders()
+        order_data = None
+        for order in orders:
+            if order["platform_order_id"] == platform_order_id:
+                order_data = order
+                logger.info(f"找到匹配的訂單: {order_data}")
+                break
+
+        if not order_data:
+            logger.error(f"找不到對應訂單，平台訂單ID: {platform_order_id}")
+            return jsonify({"valid": False}), 404
+
+        # 假設訂單有效（可根據實際需求添加更多驗證邏輯，例如檢查庫存）
+        return jsonify({"valid": True})
+
+    except Exception as e:
+        import traceback
+        logger.error(f"確認錯誤: {str(e)}")
+        logger.error(f"堆棧跟踪: {traceback.format_exc()}")
+        return jsonify({"valid": False}), 500
 
 @app.route("/result_url", methods=["POST"])
 def result_url():
@@ -331,5 +361,5 @@ def result_display_url():
         '''
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8001))  # 默認為 8001，但優先使用環境變數 PORT
+    port = int(os.getenv("PORT", 8001))  # 使用 Render.com 提供的 PORT，默認為 8001
     app.run(host="0.0.0.0", port=port)
