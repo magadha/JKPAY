@@ -37,6 +37,15 @@ JKO_PAY_REFUND_URL = os.getenv("JKO_PAY_REFUND_URL", "https://uat-onlinepay.jkop
 BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")  # 更新為 Render.com 提供的域名
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwju-slnDJ9RYSgWctfjQ7Yg0FOU4Ur6YFu5UWLlKVPsDuMQ3niQI--2b1T06fWBe7PDQ/exec")
 
+# 街口支付 UAT 環境的 IP 白名單
+JKO_UAT_IPS = [
+    "125.227.158.49",
+    "220.133.77.56",
+    "59.124.107.103",
+    "175.99.130.66",
+    "175.99.130.82"
+]
+
 # 檢查必要的環境變數是否存在
 required_env_vars = ["JKO_PAY_STORE_ID", "JKO_PAY_API_KEY", "JKO_PAY_SECRET_KEY"]
 for var in required_env_vars:
@@ -57,15 +66,33 @@ def save_orders(new_orders):
 # 簽名計算函數（符合街口支付規則）
 def generate_signature(payload, secret_key):
     if isinstance(payload, dict):
-        # 按字母順序排序字段
-        sorted_payload = dict(sorted(payload.items()))
-        payload_str = json.dumps(sorted_payload, separators=(',', ':'), ensure_ascii=False)
+        # 按文檔中列出的字段順序，而不是字母順序
+        ordered_fields = [
+            "store_id", "platform_order_id", "currency", "total_price", "final_price",
+            "unredeem", "valid_time", "payment_type", "escrow", "products"
+        ]
+        ordered_payload = {}
+        for field in ordered_fields:
+            if field in payload:
+                ordered_payload[field] = payload[field]
+        payload_str = json.dumps(ordered_payload, separators=(',', ':'), ensure_ascii=False)
     else:
         payload_str = payload
     input_bytes = payload_str.encode("utf-8")
     secret_key_bytes = secret_key.encode("utf-8")
     digest = hmac.new(secret_key_bytes, input_bytes, hashlib.sha256).hexdigest()
     return digest
+
+# IP 白名單檢查裝飾器
+def check_ip_whitelist(f):
+    def wrapper(*args, **kwargs):
+        client_ip = request.remote_addr
+        logger.info(f"收到來自 IP {client_ip} 的請求")
+        if client_ip not in JKO_UAT_IPS:
+            logger.error(f"未授權的 IP 地址: {client_ip}")
+            return jsonify({"error": "未授權的 IP 地址"}), 403
+        return f(*args, **kwargs)
+    return wrapper
 
 @app.route("/")
 def home():
@@ -130,8 +157,8 @@ def generate_payment():
             "total_price": total_amount,
             "final_price": total_amount,
             "unredeem": total_amount,
-            "valid_time": valid_time,  # 添加訂單有效期限
-            "confirm_url": f"{BASE_URL}/confirm_url",  # 添加確認 URL
+            "valid_time": valid_time,
+            "confirm_url": f"{BASE_URL}/confirm_url",
             "result_url": f"{BASE_URL}/result_url",
             "result_display_url": f"{BASE_URL}/result_display_url",
             "payment_type": "onetime",
@@ -189,6 +216,7 @@ def generate_payment():
         return jsonify({"error": f"伺服器錯誤: {str(e)}"}), 500
 
 @app.route("/confirm_url", methods=["POST"])
+@check_ip_whitelist
 def confirm_url():
     try:
         logger.info("進入 /confirm_url 路由")
@@ -223,6 +251,7 @@ def confirm_url():
         return jsonify({"valid": False}), 500
 
 @app.route("/result_url", methods=["POST"])
+@check_ip_whitelist
 def result_url():
     try:
         logger.info("進入 /result_url 路由")
