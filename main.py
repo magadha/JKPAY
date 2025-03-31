@@ -67,16 +67,8 @@ def save_orders(new_orders):
 # 簽名計算函數（符合街口支付規則）
 def generate_signature(payload, secret_key):
     if isinstance(payload, dict):
-        # 按文檔中列出的字段順序，而不是字母順序
-        ordered_fields = [
-            "store_id", "platform_order_id", "currency", "total_price", "final_price",
-            "unredeem", "valid_time", "payment_type", "escrow", "products"
-        ]
-        ordered_payload = {}
-        for field in ordered_fields:
-            if field in payload:
-                ordered_payload[field] = payload[field]
-        payload_str = json.dumps(ordered_payload, separators=(',', ':'), ensure_ascii=False)
+        # 不按字母順序排序，保持原始順序
+        payload_str = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
     else:
         payload_str = payload
     input_bytes = payload_str.encode("utf-8")
