@@ -28,9 +28,9 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://magadha.weebly.com"}})  # 允許來自 magadha.weebly.com 的跨域請求
 
 # 使用環境變數儲存敏感資訊
-JKO_PAY_STORE_ID = os.getenv("JKO_PAY_STORE_ID", "d6561ab8-063a-11ec-bd7b-0050568403ed")
-JKO_PAY_API_KEY = os.getenv("JKO_PAY_API_KEY", "JCJjNjeUFJjd42ObiZptBrLE4P5VZNgo1n9o")
-JKO_PAY_SECRET_KEY = os.getenv("JKO_PAY_SECRET_KEY", "hQZR_mhgxQtyDseSxly6-MWqfSEdjoS3eU1Izy4_RWU7K7Utyqx49TIfssDPn3uf76j71DbkRKDKQAp36TOCkw")
+JKO_PAY_STORE_ID = os.getenv("JKO_PAY_STORE_ID")
+JKO_PAY_API_KEY = os.getenv("JKO_PAY_API_KEY")
+JKO_PAY_SECRET_KEY = os.getenv("JKO_PAY_SECRET_KEY")
 JKO_PAY_ENTRY_URL = os.getenv("JKO_PAY_ENTRY_URL", "https://uat-onlinepay.jkopay.app/platform/entry")
 JKO_PAY_INQUIRY_URL = os.getenv("JKO_PAY_INQUIRY_URL", "https://uat-onlinepay.jkopay.app/platform/inquiry")
 JKO_PAY_REFUND_URL = os.getenv("JKO_PAY_REFUND_URL", "https://uat-onlinepay.jkopay.app/platform/refund")
