@@ -9,7 +9,7 @@ import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
-from functools import wraps
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,15 +37,6 @@ JKO_PAY_INQUIRY_URL = os.getenv("JKO_PAY_INQUIRY_URL", "https://uat-onlinepay.jk
 JKO_PAY_REFUND_URL = os.getenv("JKO_PAY_REFUND_URL", "https://uat-onlinepay.jkopay.app/platform/refund")
 BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")  # 更新為 Render.com 提供的域名
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwju-slnDJ9RYSgWctfjQ7Yg0FOU4Ur6YFu5UWLlKVPsDuMQ3niQI--2b1T06fWBe7PDQ/exec")
-
-# 街口支付 UAT 環境的 IP 白名單
-JKO_UAT_IPS = [
-    "125.227.158.49",
-    "220.133.77.56",
-    "59.124.107.103",
-    "175.99.130.66",
-    "175.99.130.82"
-]
 
 # 檢查必要的環境變數是否存在
 required_env_vars = ["JKO_PAY_STORE_ID", "JKO_PAY_API_KEY", "JKO_PAY_SECRET_KEY"]
@@ -75,18 +66,6 @@ def generate_signature(payload, secret_key):
     secret_key_bytes = secret_key.encode("utf-8")
     digest = hmac.new(secret_key_bytes, input_bytes, hashlib.sha256).hexdigest()
     return digest
-
-# IP 白名單檢查裝飾器
-def check_ip_whitelist(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        client_ip = request.remote_addr
-        logger.info(f"收到來自 IP {client_ip} 的請求")
-        if client_ip not in JKO_UAT_IPS:
-            logger.error(f"未授權的 IP 地址: {client_ip}")
-            return jsonify({"error": "未授權的 IP 地址"}), 403
-        return f(*args, **kwargs)
-    return wrapper
 
 @app.route("/")
 def home():
@@ -143,7 +122,8 @@ def generate_payment():
         # 街口支付邏輯
         platform_order_id = f"ORDER_{uuid.uuid4()}_{int(time.time())}"
         # 設置訂單有效期限（當前時間 + 20 分鐘，UTC+8 時區）
-        valid_time = (datetime.now() + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
+        taipei_tz = pytz.timezone("Asia/Taipei")
+        valid_time = (datetime.now(taipei_tz) + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
         data = {
             "store_id": JKO_PAY_STORE_ID,
             "platform_order_id": platform_order_id,
@@ -210,7 +190,6 @@ def generate_payment():
         return jsonify({"error": f"伺服器錯誤: {str(e)}"}), 500
 
 @app.route("/confirm_url", methods=["POST"])
-@check_ip_whitelist
 def confirm_url():
     try:
         logger.info("進入 /confirm_url 路由")
@@ -245,7 +224,6 @@ def confirm_url():
         return jsonify({"valid": False}), 500
 
 @app.route("/result_url", methods=["POST"])
-@check_ip_whitelist
 def result_url():
     try:
         logger.info("進入 /result_url 路由")
