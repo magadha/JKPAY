@@ -56,11 +56,11 @@ def save_orders(new_orders):
 
 # 簽名計算函數（符合街口支付規則）
 def generate_signature(payload, secret_key):
-    if isinstance(payload, dict):
-        # 不按字母順序排序，保持原始順序
-        payload_str = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
-    else:
-        payload_str = payload
+    # 按鍵名字母順序排序
+    sorted_payload = dict(sorted(payload.items()))
+    # 轉為緊湊的 JSON 字符串
+    payload_str = json.dumps(sorted_payload, separators=(',', ':'), ensure_ascii=False, sort_keys=True)
+    logger.info(f"簽名用的 JSON 字符串: {payload_str}")
     input_bytes = payload_str.encode("utf-8")
     secret_key_bytes = secret_key.encode("utf-8")
     digest = hmac.new(secret_key_bytes, input_bytes, hashlib.sha256).hexdigest()
@@ -112,7 +112,7 @@ def generate_payment():
             "currency": "TWD",
             "total_price": total_amount,
             "final_price": total_amount,
-            "unredeem": total_amount,
+            "unredeem": 0,  # 固定為 0，根據街口要求
             "result_url": f"{BASE_URL}/result_url",
             "result_display_url": f"{BASE_URL}/result_display_url"
         }
