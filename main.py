@@ -8,7 +8,6 @@ import os
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,14 +17,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler()  # 僅輸出到終端
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://magadha.weebly.com"}})  # 允許來自 magadha.weebly.com 的跨域請求
+CORS(app, resources={r"/*": {"origins": "https://magadha.weebly.com"}})
 
 # 使用環境變數儲存敏感資訊
 JKO_PAY_STORE_ID = os.getenv("JKO_PAY_STORE_ID")
@@ -34,7 +31,7 @@ JKO_PAY_SECRET_KEY = os.getenv("JKO_PAY_SECRET_KEY")
 JKO_PAY_ENTRY_URL = os.getenv("JKO_PAY_ENTRY_URL", "https://uat-onlinepay.jkopay.app/platform/entry")
 JKO_PAY_INQUIRY_URL = os.getenv("JKO_PAY_INQUIRY_URL", "https://uat-onlinepay.jkopay.app/platform/inquiry")
 JKO_PAY_REFUND_URL = os.getenv("JKO_PAY_REFUND_URL", "https://uat-onlinepay.jkopay.app/platform/refund")
-BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")  # 更新為 Render.com 提供的域名
+BASE_URL = os.getenv("BASE_URL", "https://jkpay.onrender.com")
 GOOGLE_SCRIPT_URL = os.getenv("GOOGLE_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwju-slnDJ9RYSgWctfjQ7Yg0FOU4Ur6YFu5UWLlKVPsDuMQ3niQI--2b1T06fWBe7PDQ/exec")
 
 # 檢查必要的環境變數是否存在
@@ -54,12 +51,10 @@ def save_orders(new_orders):
     global orders
     orders = new_orders
 
-# 簽名計算函數（符合街口支付規則）
+# 簽名計算函數（與 PHP 一致，不排序，直接使用原始 JSON 字符串）
 def generate_signature(payload, secret_key):
-    # 按鍵名字母順序排序
-    sorted_payload = dict(sorted(payload.items()))
-    # 轉為緊湊的 JSON 字符串
-    payload_str = json.dumps(sorted_payload, separators=(',', ':'), ensure_ascii=False, sort_keys=True)
+    # 直接將字典轉為 JSON 字符串，不排序
+    payload_str = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
     logger.info(f"簽名用的 JSON 字符串: {payload_str}")
     input_bytes = payload_str.encode("utf-8")
     secret_key_bytes = secret_key.encode("utf-8")
@@ -117,7 +112,7 @@ def generate_payment():
             "result_display_url": f"{BASE_URL}/result_display_url"
         }
 
-        # 計算簽名
+        # 計算簽名（與 PHP 一致）
         signature = generate_signature(data, JKO_PAY_SECRET_KEY)
         logger.info(f"生成的簽名: {signature}")
         logger.info(f"發送的請求數據: {json.dumps(data, ensure_ascii=False)}")
@@ -191,7 +186,6 @@ def confirm_url():
             logger.error(f"找不到對應訂單，平台訂單ID: {platform_order_id}")
             return jsonify({"valid": False}), 404
 
-        # 假設訂單有效（可根據實際需求添加更多驗證邏輯，例如檢查庫存）
         return jsonify({"valid": True})
 
     except Exception as e:
@@ -229,7 +223,6 @@ def result_url():
             logger.error(f"找不到對應訂單，平台訂單ID: {platform_order_id}")
             return jsonify({"status": "error", "message": "訂單未找到"}), 404
 
-        # 根據狀態處理
         if status == 0:  # 交易成功
             order_data["paymentMethod"] = "jkopay"
             order_data["tradeNo"] = trade_no
@@ -285,7 +278,6 @@ def result_display_url():
             </html>
             '''
 
-        # 簡單的返回頁面，支付完成後顯示
         return '''
         <html>
         <head>
@@ -339,5 +331,5 @@ def result_display_url():
         '''
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8001))  # 使用 Render.com 提供的 PORT，默認為 8001
+    port = int(os.getenv("PORT", 8001))
     app.run(host="0.0.0.0", port=port)
